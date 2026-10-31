@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>My Bytebeat Composer</title>
+  <style>
+    body { background: #121212; color: #fff; font-family: monospace; padding: 20px; }
+    textarea { width: 100%; height: 80px; background: #222; color: #0f0; font-size: 16px; border: 1px solid #444; padding: 10px; }
+    button { background: #0f0; color: #000; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+    select { padding: 10px; background: #222; color: #fff; border: 1px solid #444; }
+  </style>
+</head>
+<body>
+  <h2>Bytebeat Composer</h2>
+  
+  <textarea id="formula">((t * t >> 10) ^ (Math.sin(Math.sqrt(Math.abs(Math.tan(Math.floor(Math.abs(Math.sin(t))))) * 100)) * 128 + 128)) & (Math.floor(Math.sqrt(Math.abs(Math.atan(Math.abs(Math.floor(Math.sign(Math.cos(t)))))))) | Math.floor(Math.cos(Math.abs(Math.sin(t))) * 128))</textarea>
+  <br>
+  
+  <label>Sample Rate: </label>
+  <select id="sampleRate">
+    <option value="48000" selected>48000 Hz</option>
+    <option value="8000">8000 Hz</option>
+    <option value="11025">11025 Hz</option>
+    <option value="32000">32000 Hz</option>
+  </select>
+
+  <button id="playBtn">Play / Update</button>
+  <button id="stopBtn" style="background: #f00; color: #fff;">Stop</button>
+
+  <script>
+    let audioCtx = null;
+    let workletNode = null;
+
+    document.getElementById('playBtn').onclick = async () => {
+      const sampleRate = parseInt(document.getElementById('sampleRate').value);
+      const code = document.getElementById('formula').value;
+
+      if (audioCtx) await audioCtx.close();
+      
+      // Инициализируем аудио-контекст с нужной частотой
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+
+      // Код генератора звука для AudioWorklet
+      const workletCode = `
+        class BytebeatProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.t = 0;
+            this.fn = t => 0;
+            this.port.onmessage = (e) => {
+              try {
+                // Динамическая компиляция формулы
+                this.fn = new Function('t', 'return ' + e.data + ';');
+              } catch(err) {}
+            };
+          }
+
+          process(inputs, outputs) {
+            const output = outputs[0];
+            const channel = output[0];
+            for (let i = 0; i < channel.length; i++) {
+              try {
+                let val = this.fn(this.t++);
+                // Нормализация байтового сигнала (0..255) в аудио диапазон (-1.0 .. 1.0)
+                channel[i] = ((val & 255) / 127.5) - 1.0;
+              } catch(e) {
+                channel[i] = 0;
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor('bytebeat-processor', BytebeatProcessor);
+      `;
+
+      const blob = new Blob([workletCode], { type: 'application/javascript' });
+      const url = URL.createObjectURL(blob);
+
+      await audioCtx.audioWorklet.addModule(url);
+      workletNode = new AudioWorkletNode(audioCtx, 'bytebeat-processor');
+      workletNode.port.postMessage(code);
+      workletNode.connect(audioCtx.destination);
+    };
+
+    document.getElementById('stopBtn').onclick = () => {
+      if (audioCtx) audioCtx.close();
+    };
+  </script>
+</body>
+</html>
